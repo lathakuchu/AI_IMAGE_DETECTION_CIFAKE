@@ -45,8 +45,8 @@ def main():
     )
 
     # Load model and classes
-    from tensorflow.keras.models import load_model 
-    model = load_model("saved_model.h5")
+    import tensorflow as tf
+    model = tf.keras.models.load_model("saved_model.h5", compile=False)
 
     class_names = load_class_names()
 
@@ -70,7 +70,7 @@ def main():
             prediction = model.predict(img_array, verbose=0)[0]
 
             st.write("Raw Prediction:", prediction)
-            
+
             predicted_idx = int(np.argmax(prediction))
 
             predicted_class = class_names[predicted_idx]
