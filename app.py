@@ -1,92 +1,99 @@
-import json
-import streamlit as st
+import gradio as gr
 import tensorflow as tf
-from tensorflow.keras.preprocessing import image
 import numpy as np
-from pathlib import Path
+from PIL import Image
+import matplotlib.pyplot as plt
+from fpdf import FPDF
+import tempfile
 
-# Load Model
-@st.cache_resource
-def load_model():
-    model_path = Path(__file__).resolve().parent / "saved_model.h5"
-    return tf.keras.models.load_model(model_path)
+# Load model
+model = tf.keras.models.load_model("saved_model.h5", compile=False)
 
-# Load Class Names
-def load_class_names():
-    class_names_path = Path(__file__).resolve().parent / "class_names.json"
-
-    if class_names_path.exists():
-        with open(class_names_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    return ["FAKE", "REAL"]
-
-# Preprocess Image
-def preprocess_image(uploaded_file):
-    img = image.load_img(uploaded_file, target_size=(128, 128))
-    img_array = image.img_to_array(img)
-
+# ---------------- PREDICTION ----------------
+def predict(img):
+    img = img.resize((128, 128))
+    img_array = np.array(img).astype("float32")
     img_array = np.expand_dims(img_array, axis=0)
 
-    return img_array
+    prediction = model.predict(img_array, verbose=0)[0]
 
-# Main App
-def main():
+    fake = float(prediction[0]) * 100
+    real = float(prediction[1]) * 100
 
-    st.set_page_config(
-        page_title="AI Image Detection",
-        page_icon="🖼️",
-        layout="centered"
+    label = "FAKE" if fake > real else "REAL"
+    confidence = max(fake, real)
+
+    return label, confidence, fake, real
+
+# ---------------- BAR CHART ----------------
+def plot_chart(fake, real):
+    plt.figure()
+    plt.bar(["FAKE", "REAL"], [fake, real])
+    plt.ylabel("Confidence %")
+    plt.title("Prediction Confidence")
+    path = tempfile.NamedTemporaryFile(delete=False, suffix=".png").name
+    plt.savefig(path)
+    plt.close()
+    return path
+
+# ---------------- PDF REPORT ----------------
+def generate_pdf(label, confidence, fake, real):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=14)
+
+    pdf.cell(200, 10, txt="AI Image Detection Report", ln=True)
+    pdf.cell(200, 10, txt=f"Prediction: {label}", ln=True)
+    pdf.cell(200, 10, txt=f"Confidence: {confidence:.2f}%", ln=True)
+    pdf.cell(200, 10, txt=f"FAKE Score: {fake:.2f}%", ln=True)
+    pdf.cell(200, 10, txt=f"REAL Score: {real:.2f}%", ln=True)
+
+    path = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
+    pdf.output(path)
+    return path
+
+# ---------------- MAIN FUNCTION ----------------
+def analyze(img):
+    label, confidence, fake, real = predict(img)
+
+    chart = plot_chart(fake, real)
+    report = generate_pdf(label, confidence, fake, real)
+
+    return img, label, f"{confidence:.2f}%", chart, report
+
+# ---------------- SAMPLE IMAGES (DEMO MODE) ----------------
+def load_sample():
+    return None
+
+# ---------------- UI ----------------
+theme = gr.themes.Soft(primary_hue="blue", secondary_hue="gray")
+
+with gr.Blocks(theme=theme) as demo:
+
+    gr.Markdown("""
+    # 🧠 AI Image Detection System (CIFAKE)
+    ### Detect whether an image is REAL or AI-generated
+    """)
+
+    with gr.Row():
+
+        with gr.Column():
+            img_input = gr.Image(type="pil", label="Upload / Try Sample Image")
+            btn = gr.Button("🚀 Analyze")
+
+        with gr.Column():
+            img_out = gr.Image(label="Preview")
+            label_out = gr.Textbox(label="Prediction")
+            conf_out = gr.Textbox(label="Confidence")
+
+    with gr.Row():
+        chart_out = gr.Image(label="📊 Confidence Chart")
+        pdf_out = gr.File(label="📄 Download Report")
+
+    btn.click(
+        fn=analyze,
+        inputs=img_input,
+        outputs=[img_out, label_out, conf_out, chart_out, pdf_out]
     )
 
-    st.title("🖼️ AI Generated Image Detection")
-    st.write(
-        "Upload an image and the model will predict whether it is REAL or FAKE."
-    )
-
-    # Load model and classes
-    import tensorflow as tf
-    model = tf.keras.models.load_model("saved_model.h5", compile=False)
-
-    class_names = load_class_names()
-
-    uploaded_file = st.file_uploader(
-        "Choose an Image",
-        type=["jpg", "jpeg", "png"]
-    )
-
-    if uploaded_file is not None:
-
-        st.image(
-            uploaded_file,
-            caption="Uploaded Image",
-            use_container_width=True
-        )
-
-        with st.spinner("Analyzing Image..."):
-
-            img_array = preprocess_image(uploaded_file)
-        
-            prediction = model.predict(img_array, verbose=0)[0]
-
-            st.write("Raw Prediction:", prediction)
-
-            predicted_idx = int(np.argmax(prediction))
-
-            predicted_class = class_names[predicted_idx]
-
-            confidence = float(prediction[predicted_idx]) * 100
-
-            st.success("Prediction Completed")
-
-            st.subheader("Prediction Result")
-
-            st.write(f"**Predicted Class:** {predicted_class}")
-            st.write(f"**Confidence:** {confidence:.2f}%")
-
-            if len(prediction) >= 2:
-                st.write(f"**FAKE Score:** {prediction[0] * 100:.2f}%")
-                st.write(f"**REAL Score:** {prediction[1] * 100:.2f}%")
-
-if __name__ == "__main__":
-    main()
+demo.launch()
